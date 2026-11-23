@@ -21,6 +21,7 @@ from ddev.ai.runtime.checkpoints import (
     GoalValidationRecord,
     SuccessCheckpoint,
 )
+from ddev.ai.runtime.errors import CredentialRefreshError
 from ddev.event_bus.exceptions import MessageProcessingError, ProcessorHookError
 from ddev.event_bus.orchestrator import AsyncProcessor, BaseMessage
 
@@ -192,5 +193,6 @@ class Phase(AsyncProcessor[PhaseTrigger]):
                     id=f"{self._phase_id}_failed",
                     phase_id=self._phase_id,
                     error=str(original_error),
+                    refresh_error=original_error if isinstance(original_error, CredentialRefreshError) else None,
                 )
             )

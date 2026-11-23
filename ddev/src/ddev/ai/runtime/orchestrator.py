@@ -19,6 +19,7 @@ from ddev.ai.runtime.resources import RunResources, RunRoute
 from ddev.ai.tools.fs.file_access_policy import FileAccessPolicy
 from ddev.event_bus.exceptions import FatalProcessingError, OrchestratorHookError
 from ddev.event_bus.orchestrator import BaseMessage, EventBusOrchestrator
+from ddev.event_bus.shutdown import ShutdownRequest
 
 DEFAULT_GRACE_PERIOD = 10.0
 
@@ -168,9 +169,11 @@ class PhaseOrchestrator(EventBusOrchestrator):
         if isinstance(message, PhaseFailedMessage):
             self._failed_phase = message.phase_id
             self._failed_error = message.error
-            error = FatalProcessingError(f"Phase '{message.phase_id}' failed: {message.error}")
             await self._callbacks.fire_run_error()
-            raise error
+            if message.refresh_error is not None:
+                self.request_shutdown(ShutdownRequest.failed(message.refresh_error))
+                return
+            raise FatalProcessingError(f"Phase '{message.phase_id}' failed: {message.error}")
 
     async def on_error(self, error: OrchestratorHookError) -> None:
         """Stop the run after an unexpected orchestrator failure."""

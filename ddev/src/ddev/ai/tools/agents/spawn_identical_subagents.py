@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Annotated
 
 from pydantic import AfterValidator, Field
 
+from ddev.ai.runtime.errors import CredentialRefreshError
 from ddev.ai.tools.agents.base import SPAWN_IDENTICAL_NAME, BaseSpawnTool, ChildOutcome
 from ddev.ai.tools.core.base import BaseToolInput
 from ddev.ai.tools.core.types import ToolResult
@@ -120,6 +121,8 @@ class SpawnIdenticalSubagentsTool(BaseSpawnTool[SpawnIdenticalSubagentsInput]):
 
         outcomes: list[ChildOutcome] = []
         for assignment, result in zip(tool_input.assignments, results, strict=True):
+            if isinstance(result, CredentialRefreshError):
+                raise result
             if isinstance(result, BaseException):
                 outcomes.append(ChildOutcome(name=assignment.name, error=f"failed: {type(result).__name__}: {result}"))
             else:

@@ -2,9 +2,15 @@
 # All rights reserved
 # Licensed under a 3-clause BSD style license (see LICENSE)
 
-from dataclasses import dataclass
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from ddev.event_bus.orchestrator import BaseMessage
+
+if TYPE_CHECKING:
+    from ddev.ai.runtime.errors import CredentialRefreshError
 
 
 @dataclass
@@ -16,3 +22,4 @@ class PhaseTrigger(BaseMessage):
 class PhaseFailedMessage(BaseMessage):
     phase_id: str
     error: str
+    refresh_error: CredentialRefreshError | None = field(default=None, repr=False)
