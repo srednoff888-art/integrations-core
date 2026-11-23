@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -1705,6 +1706,88 @@ async def test_gateway_refresh_failure_opens_recovery_modal():
         assert "starts again from its first task and may redo work" in message
 
         await pilot.click("#btn-close")
+        assert app.screen is screen
+
+
+@pytest.mark.parametrize(
+    ("error_name", "expected", "action"),
+    [
+        ("DdAuthNoBrowserError", "Run `dd-auth -- true` in a terminal on this machine", "retry"),
+        ("DdAuthTimeoutError", "The dd-auth login was not completed in time", "cancel"),
+        ("DdAuthCallbackPortsError", "Another dd-auth login may be in progress", "cancel"),
+    ],
+    ids=["no-browser", "callback-timeout", "ports-unavailable"],
+)
+async def test_gateway_login_recovery_renders_instructions_and_actions(monkeypatch, error_name, expected, action):
+    from textual.widgets import Button, Static
+
+    from ddev.ai.runtime.errors import CredentialRefreshError
+    from ddev.ai.runtime.gateway_auth import GatewayTokenProducer
+    from ddev.cli.meta.ai.tui.login_prompt import TuiLoginPrompt
+    from ddev.cli.meta.ai.tui.screens.credential_refresh_modal import LoginRecoveryModal
+    from ddev.utils import dd_auth
+
+    login_started = asyncio.Event()
+    login_failed = asyncio.Event()
+
+    async def acquire(executable: str, *, rejected_pat: str | None, on_progress: dd_auth.ProgressCallback) -> str:
+        if login_failed.is_set():
+            return "ddpat_test"
+        on_progress(dd_auth.DdAuthLoginPending())
+        login_started.set()
+        await login_failed.wait()
+        raise getattr(dd_auth, error_name)("private subprocess detail")
+
+    monkeypatch.setattr(dd_auth, "find_dd_auth", lambda: "/auth-bin/dd-auth")
+    monkeypatch.setattr(dd_auth, "acquire_datadog_pat", acquire)
+    app = _app(_make_flow())
+    async with app.run_test() as pilot, asyncio.timeout(3):
+        screen = app.screen
+        producer = GatewayTokenProducer(TuiLoginPrompt(app))
+        task = asyncio.create_task(producer.token_for("provider-a"))
+        try:
+            await login_started.wait()
+            notice = screen.query_one("#gateway-login-notice", Static)
+            assert notice.display
+            assert "A browser window may have opened" in str(notice.render())
+            login_failed.set()
+            await pilot.pause()
+
+            assert not notice.display
+            assert isinstance(app.screen, LoginRecoveryModal)
+            message = str(app.screen.query_one("#credential-refresh-message", Static).render())
+            assert expected in message
+            assert "private subprocess detail" not in message
+            assert {str(button.label) for button in app.screen.query(Button)} == {"Retry", "Cancel"}
+            await pilot.click(f"#btn-{action}")
+            if action == "retry":
+                assert await task == "ddpat_test"
+            else:
+                with pytest.raises(CredentialRefreshError):
+                    await task
+            assert app.screen is screen
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_gateway_login_prompt_closes_on_outer_cancellation():
+    from ddev.ai.runtime.login_prompt import LoginProblem
+    from ddev.cli.meta.ai.tui.login_prompt import TuiLoginPrompt
+    from ddev.cli.meta.ai.tui.screens.credential_refresh_modal import LoginRecoveryModal
+
+    app = _app(_make_flow())
+    async with app.run_test() as pilot:
+        screen = app.screen
+        task = asyncio.create_task(TuiLoginPrompt(app).resolve(LoginProblem("Login needed", "Log in to continue.")))
+        try:
+            await pilot.pause()
+            assert isinstance(app.screen, LoginRecoveryModal)
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
         assert app.screen is screen
 
 
